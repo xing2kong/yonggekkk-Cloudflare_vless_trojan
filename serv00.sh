@@ -11,11 +11,9 @@ green() { echo -e "\e[1;32m$1\033[0m"; }
 yellow() { echo -e "\e[1;33m$1\033[0m"; }
 purple() { echo -e "\e[1;35m$1\033[0m"; }
 reading() { read -p "$(red "$1")" "$2"; }
-
 USERNAME=$(whoami)
 HOSTNAME=$(hostname)
-
-[[ "$HOSTNAME" == "s1.ct8.pl" ]] && WORKDIR="domains/${USERNAME}.ct8.pl/logs" || WORKDIR="domains/${USERNAME}.serv00.net/logs"
+[[ "$HOSTNAME" == "s1.ct8.pl" ]] && export WORKDIR="domains/${USERNAME}.ct8.pl/logs" || export WORKDIR="domains/${USERNAME}.serv00.net/logs"
 [ -d "$WORKDIR" ] || (mkdir -p "$WORKDIR" && chmod 777 "$WORKDIR")
 #ps aux | grep $(whoami) | grep -v "sshd\|bash\|grep" | awk '{print $2}' | xargs -r kill -9 > /dev/null 2>&1
 
@@ -42,7 +40,7 @@ read_uuid() {
 read_reym() {
         yellow "方式一：回车使用CF域名，支持proxyip+非标端口反代ip功能 (推荐)"
 	yellow "方式二：输入 s 表示使用Serv00自带域名，不支持proxyip功能 (推荐)"
-        yellow "方式三：也可以自定义域名，注意要符合reality域名规则"
+        yellow "方式三：支持其他域名，注意要符合reality域名规则"
         reading "请输入reality域名 【请选择 回车 或者 s 或者 输入域名】: " reym
         if [[ -z "$reym" ]]; then
            reym=www.speedtest.net
@@ -120,10 +118,11 @@ uninstall_singbox() {
     case "$choice" in
        [Yy])
           ps aux | grep $(whoami) | grep -v "sshd\|bash\|grep" | awk '{print $2}' | xargs -r kill -9 2>/dev/null
-          rm -rf $WORKDIR
+          rm -rf $WORKDIR serv00.sh
 	  crontab -l | grep -v "serv00keep" >rmcron
           crontab rmcron >/dev/null 2>&1
           rm rmcron
+	  
           clear
           green "已完全卸载"
           ;;
@@ -137,12 +136,15 @@ reading "\n清理所有进程并清空所有安装内容，将退出ssh连接，
   case "$choice" in
     [Yy]) 
     ps aux | grep $(whoami) | grep -v "sshd\|bash\|grep" | awk '{print $2}' | xargs -r kill -9 2>/dev/null
-    killall -9 -u $(whoami)
+    crontab -l | grep -v "serv00keep" >rmcron
+    crontab rmcron >/dev/null 2>&1
+    rm rmcron
     find ~ -type f -exec chmod 644 {} \; 2>/dev/null
     find ~ -type d -exec chmod 755 {} \; 2>/dev/null
     find ~ -type f -exec rm -f {} \; 2>/dev/null
     find ~ -type d -empty -exec rmdir {} \; 2>/dev/null
     find ~ -exec rm -rf {} \; 2>/dev/null
+    killall -9 -u $(whoami)
     ;;
     *) menu ;;
   esac
@@ -255,6 +257,11 @@ echo "${public_key}" > public_key.txt
 openssl ecparam -genkey -name prime256v1 -out "private.key"
 openssl req -new -x509 -days 3650 -key "private.key" -out "cert.pem" -subj "/CN=$USERNAME.serv00.net"
 
+nb=$(hostname | cut -d '.' -f 1 | tr -d 's')
+if [ "$nb" == "14" ]; then
+ytb='"jnn-pa.googleapis.com",'
+fi
+
   cat > config.json << EOF
 {
   "log": {
@@ -329,6 +336,23 @@ openssl req -new -x509 -days 3650 -key "private.key" -out "cert.pem" -subj "/CN=
     }
  ],
     "outbounds": [
+     {
+        "type": "wireguard",
+        "tag": "wg",
+        "server": "162.159.192.200",
+        "server_port": 4500,
+        "local_address": [
+                "172.16.0.2/32",
+                "2606:4700:110:8f77:1ca9:f086:846c:5f9e/128"
+        ],
+        "private_key": "wIxszdR2nMdA7a2Ul3XQcniSfSZqdqjPb6w6opvf5AU=",
+        "peer_public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+        "reserved": [
+            126,
+            246,
+            173
+        ]
+    },
     {
       "type": "direct",
       "tag": "direct"
@@ -336,60 +360,70 @@ openssl req -new -x509 -days 3650 -key "private.key" -out "cert.pem" -subj "/CN=
     {
       "type": "block",
       "tag": "block"
-    },
-    {
-      "type": "dns",
-      "tag": "dns-out"
     }
   ],
-  "route": {
+   "route": {
     "rules": [
-      {
-        "protocol": "dns",
-        "outbound": "dns-out"
-      },
-      {
-        "ip_is_private": true,
-        "outbound": "direct"
-      },
-      {
-"outbound": "direct",
-"network": "udp,tcp"
-}
-    ]
-   },
-   "experimental": {
-      "cache_file": {
-      "path": "cache.db",
-      "cache_id": "mycacheid",
-      "store_fakeip": true
+    {
+     "domain": [
+     $ytb
+     "oh.my.god"
+      ],
+     "outbound": "wg"
     }
-  }
+    ],
+    "final": "direct"
+    }  
 }
 EOF
 
 if [ -e "$(basename ${FILE_MAP[web]})" ]; then
     nohup ./"$(basename ${FILE_MAP[web]})" run -c config.json >/dev/null 2>&1 &
-    sleep 2
-    pgrep -x "$(basename ${FILE_MAP[web]})" > /dev/null && green "$(basename ${FILE_MAP[web]}) is running" || { red "$(basename ${FILE_MAP[web]}) is not running, restarting..."; pkill -x "$(basename ${FILE_MAP[web]})" && nohup ./"$(basename ${FILE_MAP[web]})" run -c config.json >/dev/null 2>&1 & sleep 2; purple "$(basename ${FILE_MAP[web]}) restarted"; }
+    sleep 5
+if pgrep -x "$(basename ${FILE_MAP[web]})" > /dev/null; then
+    green "$(basename ${FILE_MAP[web]}) 主进程已启动"
+else
+for ((i=1; i<=5; i++)); do
+    red "$(basename ${FILE_MAP[web]}) 主进程未启动, 重启中... (尝试次数: $i)"
+    pkill -x "$(basename ${FILE_MAP[web]})"
+    nohup ./"$(basename ${FILE_MAP[web]})" run -c config.json >/dev/null 2>&1 &
+    sleep 5
+    if pgrep -x "$(basename ${FILE_MAP[web]})" > /dev/null; then
+        purple "$(basename ${FILE_MAP[web]}) 主进程已成功重启"
+        break
+    fi
+    if [[ $i -eq 5 ]]; then
+        red "$(basename ${FILE_MAP[web]}) 主进程重启失败"
+    fi
+done
+fi
 fi
 
 if [ -e "$(basename ${FILE_MAP[bot]})" ]; then
+    rm -rf boot.log
     if [[ $ARGO_AUTH =~ ^[A-Z0-9a-z=]{120,250}$ ]]; then
       args="tunnel --edge-ip-version auto --no-autoupdate --protocol http2 run --token ${ARGO_AUTH}"
     elif [[ $ARGO_AUTH =~ TunnelSecret ]]; then
       args="tunnel --edge-ip-version auto --config tunnel.yml run"
     else
-      args="tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile boot.log --loglevel info --url http://localhost:$vmess_port"
+     args="tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile boot.log --loglevel info --url http://localhost:$vmess_port"
     fi
     nohup ./"$(basename ${FILE_MAP[bot]})" $args >/dev/null 2>&1 &
     sleep 10
-    pgrep -x "$(basename ${FILE_MAP[bot]})" > /dev/null && green "$(basename ${FILE_MAP[bot]}) is running" || { red "$(basename ${FILE_MAP[bot]}) is not running, restarting..."; pkill -x "$(basename ${FILE_MAP[bot]})" && nohup ./"$(basename ${FILE_MAP[bot]})" "${args}" >/dev/null 2>&1 & sleep 2; purple "$(basename ${FILE_MAP[bot]}) restarted"; }
+if pgrep -x "$(basename ${FILE_MAP[bot]})" > /dev/null; then
+    green "$(basename ${FILE_MAP[bot]}) Arog进程已启动"
+else
+    red "$(basename ${FILE_MAP[bot]}) Argo进程未启动, 重启中..."
+    pkill -x "$(basename ${FILE_MAP[bot]})"
+    nohup ./"$(basename ${FILE_MAP[bot]})" "${args}" >/dev/null 2>&1 &
+    sleep 5
+    purple "$(basename ${FILE_MAP[bot]}) Argo进程已重启"
 fi
-sleep 3
-rm -f "$(basename ${FILE_MAP[web]})"
-if ps aux | grep '[c]onfig' > /dev/null; then
-green "主进程已启动"
+fi
+sleep 2
+rm -f "$(basename ${FILE_MAP[web]})" "$(basename ${FILE_MAP[bot]})"
+if pgrep -x "$(basename ${FILE_MAP[web]})" > /dev/null; then
+green "主进程已启动成功"
 else
 red "主进程未启动，根据以下情况一一排查"
 yellow "1、网页端权限是否开启"
@@ -397,25 +431,30 @@ yellow "2、端口是否设置错误(2个TCP、1个UDP)"
 yellow "3、尝试更换网页端3个端口并重装"
 yellow "4、选择5重置"
 yellow "5、当前Serv00服务器炸了？等会再试"
-exit
+red "6、以上都试了，哥直接躺平，交给进程保活，过会再来看"
+sleep 6
 fi
 }
 
 get_argodomain() {
   if [[ -n $ARGO_AUTH ]]; then
+    echo "$ARGO_DOMAIN" > gdym.log
     echo "$ARGO_DOMAIN"
   else
     local retry=0
     local max_retries=6
     local argodomain=""
     while [[ $retry -lt $max_retries ]]; do
-      ((retry++))
-      argodomain=$(grep -oE 'https://[[:alnum:]+\.-]+\.trycloudflare\.com' boot.log | sed 's@https://@@') 
+    ((retry++)) 
+    argodomain=$(grep -oE 'https://[[:alnum:]+\.-]+\.trycloudflare\.com' boot.log 2>/dev/null | sed 's@https://@@')
       if [[ -n $argodomain ]]; then
         break
       fi
-      sleep 1
-    done
+      sleep 2
+    done  
+    if [ -z ${argodomain} ]; then
+    argodomain="Argo临时域名暂时获取失败，Argo节点暂不可用"
+    fi
     echo "$argodomain"
   fi
 }
@@ -423,30 +462,28 @@ get_argodomain() {
 get_links(){
 argodomain=$(get_argodomain)
 echo -e "\e[1;32mArgo域名:\e[1;35m${argodomain}\e[0m\n"
-if [ -z ${argodomain} ]; then
-red "Argo临时域名暂时未生成，两个Argo节点不可用，其他节点依旧可用"
-fi
-echo
 green "安装进程保活"
 curl -sSL https://raw.githubusercontent.com/yonggekkk/Cloudflare_vless_trojan/main/serv00keep.sh -o serv00keep.sh && chmod +x serv00keep.sh
-sed -i '' -e '18s|743f8207-40d0-4440-9a44-97be0fea69c1|'"$UUID"'|' serv00keep.sh
-sed -i '' -e '21s|123|'"$vless_port"'|' serv00keep.sh
-sed -i '' -e '22s|456|'"$vmess_port"'|' serv00keep.sh
-sed -i '' -e '23s|789|'"$hy2_port"'|' serv00keep.sh
-sed -i '' -e '24s|888|'"$IP"'|' serv00keep.sh
-sed -i '' -e '25s|www.speedtest.net|'"$reym"'|' serv00keep.sh
-if [[ "${argodomain}" == *"trycloudflare.com"* ]] || [ -z "${argodomain}" ]; then
-sed -i '' -e '19s|111||' serv00keep.sh
-sed -i '' -e '20s|999||' serv00keep.sh
-else
-sed -i '' -e '19s|111|'"$ARGO_DOMAIN"'|' serv00keep.sh
-sed -i '' -e '20s|999|'"$ARGO_AUTH"'|' serv00keep.sh
+sed -i '' -e "18s|''|'$UUID'|" serv00keep.sh
+sed -i '' -e "21s|''|'$vless_port'|" serv00keep.sh
+sed -i '' -e "22s|''|'$vmess_port'|" serv00keep.sh
+sed -i '' -e "23s|''|'$hy2_port'|" serv00keep.sh
+sed -i '' -e "24s|''|'$IP'|" serv00keep.sh
+sed -i '' -e "25s|''|'$reym'|" serv00keep.sh
+if [ ! -f boot.log ]; then
+sed -i '' -e "19s|''|'${ARGO_DOMAIN}'|" serv00keep.sh
+sed -i '' -e "20s|''|'${ARGO_AUTH}'|" serv00keep.sh
 fi
 if ! crontab -l 2>/dev/null | grep -q 'serv00keep'; then
-(crontab -l 2>/dev/null; echo "*/10 * * * * if ! ps aux | grep '[c]onfig' > /dev/null; then /bin/bash ${WORKDIR}/serv00keep.sh; fi") | crontab -
+if [ -f boot.log ] || grep -q "trycloudflare.com" boot.log 2>/dev/null; then
+check_process="! ps aux | grep '[c]onfig' > /dev/null || ! ps aux | grep [l]ocalhost > /dev/null"
+else
+check_process="! ps aux | grep '[c]onfig' > /dev/null || ! ps aux | grep [t]oken > /dev/null"
 fi
-green "进程保活安装完毕，默认每10秒执行一次，运行 crontab -e 可自行修改cron定时时间" && sleep 2
-ISP=$(curl -s --max-time 5 https://speed.cloudflare.com/meta | awk -F\" '{print $26}' | sed -e 's/ /_/g' || echo "0")
+(crontab -l 2>/dev/null; echo "*/2 * * * * if $check_process; then /bin/bash ${WORKDIR}/serv00keep.sh; fi") | crontab -
+fi
+green "主进程+Argo进程保活安装完毕，默认每2分钟执行一次，运行 crontab -e 可自行修改保活执行间隔" && sleep 2
+ISP=$(curl -sL --max-time 5 https://speed.cloudflare.com/meta | awk -F\" '{print $26}' | sed -e 's/ /_/g' || echo "0")
 get_name() { if [ "$HOSTNAME" = "s1.ct8.pl" ]; then SERVER="CT8"; else SERVER=$(echo "$HOSTNAME" | cut -d '.' -f 1); fi; echo "$SERVER"; }
 NAME="$ISP-$(get_name)"
 rm -rf jh.txt
@@ -995,7 +1032,7 @@ rules:
   
 EOF
 sleep 2
-rm -rf boot.log config.json sb.log core tunnel.yml tunnel.json fake_useragent_0.2.0.json
+rm -rf sb.log core tunnel.yml tunnel.json fake_useragent_0.2.0.json
 }
 
 showlist(){
@@ -1036,7 +1073,7 @@ menu() {
    green "甬哥YouTube频道 ：www.youtube.com/@ygkkk"
    green "一键三协议共存：vless-reality、Vmess-ws(Argo)、hysteria2"
    green "脚本使用视频教程：https://youtu.be/2VF9D6z2z7w"
-   green "当前脚本版本：V24.12.21 已支持进程保活"
+   green "当前脚本版本：V24.12.27  快捷方式：bash serv00.sh"
    echo "========================================================="
    green  "1. 安装sing-box"
    echo   "---------------------------------------------------------"
@@ -1055,7 +1092,7 @@ ym=("$HOSTNAME" "cache$nb.serv00.com" "web$nb.serv00.com")
 rm -rf $WORKDIR/ip.txt
 for ym in "${ym[@]}"; do
 # 引用frankiejun API
-response=$(curl -s "https://ss.botai.us.kg/api/getip?host=$ym")
+response=$(curl -sL --connect-timeout 5 --max-time 7 "https://ss.botai.us.kg/api/getip?host=$ym")
 if [[ -z "$response" || "$response" == *unknown* ]]; then
 for ip in "${ym[@]}"; do
 dig @8.8.8.8 +time=2 +short $ip >> $WORKDIR/ip.txt
@@ -1079,12 +1116,22 @@ cat $WORKDIR/ip.txt
 echo
 if [[ -e $WORKDIR/list.txt ]]; then
 green "已安装sing-box"
-ps aux | grep '[c]onfig' > /dev/null && green "当前进程运行正常" || red "当前进程丢失，请卸载后重装脚本"
+ps aux | grep '[c]onfig' > /dev/null && green "主进程启动正常" || red "主进程未启动，3分钟后将自动启动"
+if [ -f "$WORKDIR/boot.log" ] && grep -q "trycloudflare.com" "$WORKDIR/boot.log" 2>/dev/null && ps aux | grep [l]ocalhost > /dev/null; then
+green "当前Argo临时域名：$(grep -oE 'https://[[:alnum:]+\.-]+\.trycloudflare\.com' $WORKDIR/boot.log 2>/dev/null | sed 's@https://@@')"
+elif ps aux | grep [t]oken > /dev/null; then
+green "当前Argo固定域名：$(cat $WORKDIR/gdym.log 2>/dev/null)"
+fi
 if ! crontab -l 2>/dev/null | grep -q 'serv00keep'; then
-(crontab -l 2>/dev/null; echo "*/10 * * * * if ! ps aux | grep '[c]onfig' > /dev/null; then /bin/bash ${WORKDIR}/serv00keep.sh; fi") | crontab -
-yellow "Cron进程保活丢失？已修复成功"
+if [ -f "$WORKDIR/boot.log" ] || grep -q "trycloudflare.com" "$WORKDIR/boot.log" 2>/dev/null; then
+check_process="! ps aux | grep '[c]onfig' > /dev/null || ! ps aux | grep [l]ocalhost > /dev/null"
 else
-green "Cron进程保活中"
+check_process="! ps aux | grep '[c]onfig' > /dev/null || ! ps aux | grep [t]oken > /dev/null"
+fi
+(crontab -l 2>/dev/null; echo "*/2 * * * * if $check_process; then /bin/bash ${WORKDIR}/serv00keep.sh; fi") | crontab -
+yellow "Cron保活丢失？已修复成功"
+else
+green "Cron保活运行正常"
 fi
 else
 red "未安装sing-box，请选择 1 进行安装" 
